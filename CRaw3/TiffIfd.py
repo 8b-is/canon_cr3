@@ -8,6 +8,9 @@ def getShortLE(d, a):
 
 def getLongLE(d, a):
  return unpack('<L',(d)[a:a+4])[0]
+
+def getSignedLongLE(d, a):
+ return unpack('<l',(d)[a:a+4])[0]
   
  
 class TiffIfd:
@@ -135,8 +138,8 @@ class TiffIfd:
           print(hexlify(data2))
     elif type == TiffIfd.TIFF_TYPE_URATIONAL:
       print('%lu / %lu' % ( getLongLE(data2, 0), getLongLE(data2, 4) ) )
-    elif type == TiffIfd.TIFF_TYPE_URATIONAL:
-      print('%ld / %ld' % ( getLongLE(data2, 0), getLongLE(data2, 4) ) )
+    elif type == TiffIfd.TIFF_TYPE_RATIONAL:
+      print('%ld / %ld' % ( getSignedLongLE(data2, 0), getSignedLongLE(data2, 4) ) )
     else:
       print()  
   
