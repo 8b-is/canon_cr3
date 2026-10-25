@@ -43,9 +43,9 @@ from typing import List, Sequence, Tuple
 
 
 def reduce_rational_pq(num: int, den: int) -> Tuple[int, int]:
-    """Return exact GCD-reduced (p, q) with q > 0."""
+    """Return exact GCD-reduced (p, q) with q > 0; reject a zero denominator."""
     if den == 0:
-        return (0, 1)
+        raise ValueError("Rational denominator must be nonzero")
     if den < 0:
         num, den = -num, -den
     g = math.gcd(abs(num), den)
@@ -60,6 +60,7 @@ class CanonRationalTagPq:
 
     @classmethod
     def decode_le_bytes(cls, raw8: bytes, tiff_type: int) -> Tuple[int, int]:
+        """Decode a rational tag, raising ValueError for an undefined p/0 value."""
         if len(raw8) < 8:
             raise ValueError(f"Expected at least 8 bytes, got {len(raw8)}")
         if tiff_type == cls.TIFF_TYPE_URATIONAL:
@@ -72,6 +73,7 @@ class CanonRationalTagPq:
 
     @classmethod
     def encode_le_bytes(cls, num: int, den: int, signed: bool = True) -> bytes:
+        """Encode a reduced rational, raising ValueError for a zero denominator."""
         p, q = reduce_rational_pq(num, den)
         fmt = "<ll" if signed else "<LL"
         return pack(fmt, p, q)
