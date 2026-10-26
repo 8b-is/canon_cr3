@@ -30,6 +30,44 @@ reduce_rational_pq = canon_mod.reduce_rational_pq
 
 
 class TestCanonCr3SpadPq(unittest.TestCase):
+    def test_reduce_rational_rejects_zero_denominator(self):
+        for numerator in (-7, 0, 7):
+            with self.subTest(numerator=numerator):
+                with self.assertRaisesRegex(ValueError, "denominator"):
+                    reduce_rational_pq(numerator, 0)
+
+    def test_decode_rejects_undefined_signed_and_unsigned_tags(self):
+        for fmt, tag_type, numerator in (
+            ("<ll", CanonRationalTagPq.TIFF_TYPE_RATIONAL, -7),
+            ("<LL", CanonRationalTagPq.TIFF_TYPE_URATIONAL, 7),
+            ("<ll", CanonRationalTagPq.TIFF_TYPE_RATIONAL, 0),
+        ):
+            with self.subTest(tag_type=tag_type, numerator=numerator):
+                with self.assertRaisesRegex(ValueError, "denominator"):
+                    CanonRationalTagPq.decode_le_bytes(pack(fmt, numerator, 0), tag_type)
+
+    def test_encode_rejects_zero_denominator(self):
+        for signed in (False, True):
+            for numerator in (0, 7):
+                with self.subTest(signed=signed, numerator=numerator):
+                    with self.assertRaisesRegex(ValueError, "denominator"):
+                        CanonRationalTagPq.encode_le_bytes(numerator, 0, signed=signed)
+
+    def test_valid_rational_values_remain_exact(self):
+        cases = (
+            (-6, 9, True, (-2, 3)),
+            (6, -9, True, (-2, 3)),
+            (-6, -9, True, (2, 3)),
+            (0, -9, True, (0, 1)),
+            (-(2**31), 1, True, (-(2**31), 1)),
+            (2**32 - 1, 1, False, (2**32 - 1, 1)),
+        )
+        for numerator, denominator, signed, expected in cases:
+            with self.subTest(numerator=numerator, denominator=denominator):
+                encoded = CanonRationalTagPq.encode_le_bytes(numerator, denominator, signed)
+                tag_type = 10 if signed else 5
+                self.assertEqual(CanonRationalTagPq.decode_le_bytes(encoded, tag_type), expected)
+
     def test_tiff_ifd_signed_rational_type10_display(self):
         # Build minimal Canon Little-Endian ('II') TIFF IFD with 1 signed RATIONAL (type 10) entry: -2 / 3 EV
         # Header (8B): 'II', 0x002a, offset=8
