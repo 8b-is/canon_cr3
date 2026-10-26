@@ -22,5 +22,7 @@ fixture resolves relative to its test file and requires the tracked
 
 The sample tests cover one Canon EOS M50 image and malformed synthetic
 inputs. They do not establish support for every camera, complete format
-conformance, or a comprehensive security audit. Other historical CLI and
-`CRaw3` parsing paths are unchanged.
+conformance, or a comprehensive security audit. The separate CLI now checks
+the same box-boundary and progress conditions before dispatching payloads.
+Its regression tests invoke the actual command with bounded subprocesses.
+Other payload parsers, including `CRaw3.Ctmd`, still require separate review.
