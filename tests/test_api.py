@@ -16,10 +16,11 @@ along with cannon_cr3. If not, see <http://www.gnu.org/licenses/>.
 
 '''
 
+from pathlib import Path
 from unittest import TestCase
 from canon_cr3 import Image
 
-test_file = '../samples/IMG_0482_raw.CR3'
+test_file = Path(__file__).resolve().parents[1] / 'samples' / 'IMG_0482_raw.CR3'
 
 
 class TestImageAPI(TestCase):
