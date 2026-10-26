@@ -13,7 +13,11 @@ class Ctmd:
     self.index_list = []
     self.data = data
     
+    if len(data) < Ctmd.S_CTMD_INDEX_HEADER.size:
+      raise ValueError('Truncated CTMD index header')
     _, _, nb = Ctmd.S_CTMD_INDEX_HEADER.unpack_from( data, 0)
+    if nb > (len(data) - Ctmd.S_CTMD_INDEX_HEADER.size) // Ctmd.S_CTMD_INDEX_ENTRY.size:
+      raise ValueError('CTMD index entries exceed the index buffer')
     for i in range(nb):
       _, type, size = Ctmd.S_CTMD_INDEX_ENTRY.unpack_from( data, Ctmd.S_CTMD_INDEX_HEADER.size + i*Ctmd.S_CTMD_INDEX_ENTRY.size)
       entry = Ctmd.NT_CTMD_INDEX_ENTRY( type, size )
@@ -36,27 +40,44 @@ class Ctmd:
 
   def parse(self, data ):
     self.ctmd_list = OrderedDict()
+    if len(self.offsets) != len(self.sizes):
+      raise ValueError('CTMD picture offsets and sizes have different counts')
     pic_num = 0
     for file_offset, ctmd_size in zip( self.offsets, self.sizes ): #for all pictures in roll
+      if file_offset < 0 or ctmd_size < 0 or file_offset > len(data) or ctmd_size > len(data) - file_offset:
+        raise ValueError('CTMD picture range exceeds the file buffer')
       ctmd_data = data[ file_offset: file_offset+ctmd_size ]  
       ctmd_offset = 0
       ctmd_records = dict()
       for type, size in self.index_list: #contains type and size
+        if size < Ctmd.S_CTMD_RECORD_HEADER.size or size > len(ctmd_data) - ctmd_offset:
+          raise ValueError('CTMD record size is outside its picture buffer')
         ctmd_record = ctmd_data[ ctmd_offset: ctmd_offset+size ]
         record_size, record_type, _, _, _, _ = Ctmd.S_CTMD_RECORD_HEADER.unpack_from( ctmd_record, 0)
         if record_size!=size or record_type!=type:
-          print('warning CMDT type:%d/%d size:0x%x/0x%x' % (type, record_type, size, record_size ) )
+          raise ValueError('CTMD record type or size does not match its index')
         if record_type in Ctmd.CTMD_TIFF_TYPES:
           record_offset = Ctmd.S_CTMD_RECORD_HEADER.size #inside the record
           ctmd_tiff = dict()
           while record_offset < record_size:
+            remaining = record_size - record_offset
+            if remaining < Ctmd.S_CTMD_TIFF_HEADER.size:
+              raise ValueError('Truncated CTMD TIFF payload header')
             payload_size, payload_tag = Ctmd.S_CTMD_TIFF_HEADER.unpack_from( ctmd_record, record_offset )
-            #print("size %x tag %x" % (payload_size, payload_tag) )
-            tiff = TiffIfd( ctmd_record[ record_offset+Ctmd.S_CTMD_TIFF_HEADER.size: ], payload_size, file_offset+ctmd_offset+record_offset+Ctmd.S_CTMD_TIFF_HEADER.size, b'CTMD%d_0x%x'%(record_type, payload_tag), False) 
+            if payload_size < Ctmd.S_CTMD_TIFF_HEADER.size or payload_size > remaining:
+              raise ValueError('CTMD TIFF payload size is outside its record')
+            payload_start = record_offset + Ctmd.S_CTMD_TIFF_HEADER.size
+            payload_end = record_offset + payload_size
+            tiff = TiffIfd( ctmd_record[payload_start:payload_end], payload_end-payload_start, file_offset+ctmd_offset+payload_start, b'CTMD%d_0x%x'%(record_type, payload_tag), False)
             ctmd_tiff[ payload_tag ] =  (file_offset+ctmd_offset+record_offset, payload_size, payload_tag, (record_offset+Ctmd.S_CTMD_TIFF_HEADER.size, tiff) )  
             record_offset += payload_size
           ctmd_records[type] = Ctmd.NT_CTMD_RECORD(size, type, file_offset+ctmd_offset, ctmd_tiff)  #store context and TIFF entries		
         else:
+          scalar = {Ctmd.CTMD_TYPE_TIMESTAMP: Ctmd.S_CTMD_TIMESTAMP,
+                    Ctmd.CTMD_TYPE_EXPOSURE: Ctmd.S_CTMD_EXPOSURE,
+                    Ctmd.CTMD_TYPE_FOCAL: Ctmd.S_CTMD_FOCAL}.get(record_type)
+          if scalar is not None and record_size - Ctmd.S_CTMD_RECORD_HEADER.size < scalar.size:
+            raise ValueError('Truncated CTMD scalar record')
           if record_type == Ctmd.CTMD_TYPE_TIMESTAMP:
             _, y, mo, d, h, m, s, ms = Ctmd.S_CTMD_TIMESTAMP.unpack_from( ctmd_record, Ctmd.S_CTMD_RECORD_HEADER.size )
             ctmd_records[type] = Ctmd.NT_CTMD_RECORD( size, type, file_offset+ctmd_offset, Ctmd.NT_CTMD_TIMESTAMP( y, mo, d, h, m, s, ms ) )

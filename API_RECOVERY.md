@@ -25,4 +25,7 @@ inputs. They do not establish support for every camera, complete format
 conformance, or a comprehensive security audit. The separate CLI now checks
 the same box-boundary and progress conditions before dispatching payloads.
 Its regression tests invoke the actual command with bounded subprocesses.
-Other payload parsers, including `CRaw3.Ctmd`, still require separate review.
+`CRaw3.Ctmd` also checks index, picture, record and payload boundaries, rejects
+non-progressing payload sizes and bounds each TIFF parser to its own payload.
+Known scalar records require their complete fixed headers. The TIFF parser's
+internal offsets and other payload parsers still require separate review.
