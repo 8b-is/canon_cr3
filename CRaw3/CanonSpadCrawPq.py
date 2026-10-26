@@ -1,37 +1,18 @@
 """
-================================================================================
-[8b-is Sovereign Canon CR3 / C-RAW / SPAD Substrate — Exact p/q Rational
- EXIF/CTMD Evaluator, SPAD 5-Trit/Byte Photon-Flux Stream & Omni BFP-64 Wavelets]
+Exact rational TIFF/CTMD helpers and experimental balanced-trit utilities.
 
-Connects Canon CR3 / C-RAW (`CMP1` / `CRX` LeGall 5/3 wavelet codec) & Canon
-Megapixel SPAD (Single-Photon Avalanche Diode) imaging with the 8b-is stack:
-- https://github.com/8b-is/alexiai (GAIA-MLX-QUANT 5-trits/byte b1.58 kernel)
-- https://github.com/8b-is/japan   (Canon NIL PMO + SPAD Ternary + Medical Exegesis)
+CanonRationalTagPq encodes and decodes GCD-reduced rational pairs for TIFF
+rational types 5 and 10 without converting them to floating point.
 
-Key Bugfixes & Mathematical Upgrades for `canon_cr3`:
-1. Bugfix in `CRaw3/TiffIfd.py`:
-   Line 138 had a duplicate `elif type == TiffIfd.TIFF_TYPE_URATIONAL:` branch
-   that made `TIFF_TYPE_RATIONAL` (type 10, signed rational `p/q` used for Canon
-   APEX ExposureBiasValue, ShutterSpeedValue, and ColorMatrix) unreachable, and
-   unpacked signed numerators/denominators with unsigned `<L`. Fixed to check
-   `TIFF_TYPE_RATIONAL` and unpack signed `<l` via `getSignedLongLE`.
-2. Bugfix in `CRaw3/Crx.py`:
-   Handled Canon's 4-byte zero padding tail in `CMP1.hsize` (`sign == 0 and length == 0`)
-   without aborting `parse_tile()`.
-3. Exact GCD-Reduced `p/q` Rational TIFF/CTMD Tag Evaluator (`CanonRationalTagPq`):
-   Decodes raw 8-byte little-endian `URATIONAL` (type 5) and `RATIONAL` (type 10)
-   records directly into reduced `(p, q)` integer pairs with zero IEEE-754 drift.
-4. Canon SPAD Balanced-Ternary `b1.58` (`{-1, 0, +1}`) Photon-Flux Codec
-   (`SpadTernaryFluxStreamPq`):
-   Maps single-photon avalanche timestamp differentials into balanced-ternary
-   trits (`+1` rising photon flux edge, `0` dead-time/dark-count equilibrium,
-   `-1` falling flux / quench) packed at 5 trits per byte (`3^5 = 243 <= 256`),
-   achieving `10/1x` compression vs 16-bit raw frames and `O(1)` bitplane popcount
-   coincidence detection.
-5. Omni BFP-64 Wavelet Subband Tile Compressor (`CrxSubbandBfp64Pq`):
-   Compresses 64-coefficient CRX wavelet blocks into 64 `int8` mantissas + 1 shared
-   `int8` exponent (`256/65 ~= 63/16x` vs FP32).
-================================================================================
+SpadTernaryFluxStreamPq classifies changes between sequential counts as -1, 0
+or +1. That classification discards count magnitudes and cannot reconstruct
+original photon counts. Its separate byte-packing helper preserves the trits
+exactly, storing up to five radix-3 digits per byte; the trit count must be
+carried separately. Coincidence counting compares at most 64 trits per input.
+
+These are mathematical helpers. This module does not implement a Canon SPAD
+hardware interface, a CRX wavelet compressor, or CrxSubbandBfp64Pq. No device
+validation or lossless raw-frame compression ratio is established here.
 """
 
 from __future__ import annotations
@@ -81,9 +62,9 @@ class CanonRationalTagPq:
 
 class SpadTernaryFluxStreamPq:
     """
-    Canon Megapixel SPAD Balanced-Ternary {-1, 0, +1} Photon-Flux Event Stream.
-    Packs 5 trits per byte (3^5 = 243 <= 256) and 64-trit bitplane masks
-    (pos_mask: u64, neg_mask: u64) for hardware popcount photon coincidence gating.
+    Experimental count-difference classification and balanced-trit helpers.
+    Packing is lossless for trits, not for the original count sequence.
+    Coincidence counting uses Python integer masks for at most 64 positions.
     """
 
     POW3 = (1, 3, 9, 27, 81)
@@ -93,8 +74,7 @@ class SpadTernaryFluxStreamPq:
         cls, counts: Sequence[int], deadtime_threshold: int = 1
     ) -> List[int]:
         """
-        Convert sequential SPAD photon-avalanche counts into balanced-ternary
-        flux differential trits {-1, 0, +1}.
+        Classify count differences as {-1, 0, +1}, discarding their magnitudes.
         """
         if not counts:
             return []
@@ -111,30 +91,55 @@ class SpadTernaryFluxStreamPq:
 
     @classmethod
     def pack_5trits_per_byte(cls, trits: Sequence[int]) -> bytes:
-        """Pack balanced trits {-1, 0, +1} at 5 trits per byte (radix-3 digits {0, 1, 2})."""
+        """Pack integer trits {-1, 0, +1}; unused high radix-3 digits are zero.
+
+        The caller must retain the trit count for decoding. Booleans and
+        noninteger values raise TypeError; integers outside the alphabet
+        raise ValueError.
+        """
         out = bytearray()
         n = len(trits)
         for i in range(0, n, 5):
             chunk = trits[i : i + 5]
             byte_val = 0
             for idx, t in enumerate(chunk):
-                digit = (1 if t > 0 else (-1 if t < 0 else 0)) + 1  # {-1,0,+1} -> {0,1,2}
+                if isinstance(t, bool) or not isinstance(t, int):
+                    raise TypeError('Trits must be integers, not booleans')
+                if t not in (-1, 0, 1):
+                    raise ValueError('Trits must be -1, 0 or 1')
+                digit = t + 1  # {-1,0,+1} -> {0,1,2}
                 byte_val += digit * cls.POW3[idx]
             out.append(byte_val)
         return bytes(out)
 
     @classmethod
     def unpack_5trits_per_byte(cls, packed: bytes, num_trits: int) -> List[int]:
-        """Unpack 5-trits-per-byte stream back to exact {-1, 0, +1} trits."""
+        """Decode a canonical bytes/bytearray frame of exactly num_trits trits.
+
+        The count must be a nonnegative integer, excluding bool. The frame
+        must contain exactly ceil(num_trits / 5) bytes, each below 243, with
+        zero unused high radix-3 digits in its final byte. Invalid types raise
+        TypeError; invalid counts, lengths or encodings raise ValueError.
+        """
+        if isinstance(num_trits, bool) or not isinstance(num_trits, int):
+            raise TypeError('Trit count must be an integer, not a boolean')
+        if num_trits < 0:
+            raise ValueError('Trit count must be nonnegative')
+        if not isinstance(packed, (bytes, bytearray)):
+            raise TypeError('Packed trits must be bytes or bytearray')
+        if len(packed) != (num_trits + 4) // 5:
+            raise ValueError('Packed byte length does not match the trit count')
         out: List[int] = []
         for b in packed:
-            rem = int(b)
-            for _ in range(5):
-                if len(out) >= num_trits:
-                    break
+            if b >= 243:
+                raise ValueError('Packed byte contains a reserved trit encoding')
+            rem = b
+            for _ in range(min(5, num_trits - len(out))):
                 digit = rem % 3
                 rem //= 3
                 out.append(digit - 1)
+            if rem:
+                raise ValueError('Unused high trit digits must be zero')
         return out
 
     @classmethod

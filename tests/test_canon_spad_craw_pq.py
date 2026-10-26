@@ -100,7 +100,7 @@ class TestCanonCr3SpadPq(unittest.TestCase):
         counts = [10, 15, 15, 8, 2, 9, 10, 3, 20, 21, 14]
         trits = SpadTernaryFluxStreamPq.encode_photon_counts_to_trits(counts, deadtime_threshold=1)
         packed = SpadTernaryFluxStreamPq.pack_5trits_per_byte(trits)
-        # 11 trits pack into ceil(11/5) = 3 bytes (vs 22 bytes in INT16 = 22/3x compression!)
+        # Eleven trits occupy three bytes. The original counts are not recoverable.
         self.assertEqual(len(packed), 3)
         unpacked = SpadTernaryFluxStreamPq.unpack_5trits_per_byte(packed, len(trits))
         self.assertEqual(trits, unpacked)
