@@ -225,15 +225,32 @@ UUID_LEN = 16
 #o = offset inside
 #no = next offset after name and length 
 def parse(offset, d, base, depth):
+  if depth > 128:
+    raise ValueError('Box nesting exceeds the parser limit')
   o = 0
   #print('base=0x%x offset=0x%x'% (base, offset))
   while o < len(d):
+    remaining = len(d) - o
+    no = SIZELEN+NAMELEN #next offset to look for data
+    if remaining < no:
+      raise ValueError('Truncated box header')
     l = getLongBE(d, o)
     chunkName = d[o+SIZELEN:o+SIZELEN+NAMELEN]
-    no = SIZELEN+NAMELEN #next offset to look for data
     if l==1:
+      no += 8
+      if remaining < no:
+        raise ValueError('Truncated extended box header')
       l = getLongLongBE(d, o+SIZELEN+NAMELEN)
-      no = SIZELEN+NAMELEN+8
+    elif l==0:
+      if depth != 0:
+        raise ValueError('Zero-sized boxes must be top-level')
+      l = remaining
+    if l < no or l > remaining:
+      raise ValueError('Box size is outside its containing buffer')
+    if chunkName == b'uuid' and l-no < UUID_LEN:
+      raise ValueError('Truncated UUID box header')
+    if chunkName in innerOffsets and l-no < innerOffsets[chunkName]:
+      raise ValueError('Truncated container prefix')
     dl = min(32, l) #display length
     if not options.quiet:
       print( '%05x:%s' % (base+o, depth*'  '), end=''  )
@@ -268,6 +285,8 @@ def parse(offset, d, base, depth):
       if uuidValue == unhexlify('85c0b687820f11e08111f4ce462b6a48') or uuidValue == unhexlify('5766b829bb6a47c5bcfb8b9f2260d06d') or uuidValue == unhexlify('210f1687914911e4811100242131fce4'):
         parse(offset+o+no+UUID_LEN, d[o+no+UUID_LEN:o+no+UUID_LEN +l-no-UUID_LEN], base+o+no+UUID_LEN, depth+1)
       elif uuidValue == unhexlify('eaf42b5e1c984b88b9fbb7dc406e4d16'):
+        if l-no < UUID_LEN+8:
+          raise ValueError('Truncated UUID container prefix')
         parse(offset+o+no+UUID_LEN+8, d[o+no+UUID_LEN+8:o+no+UUID_LEN+8 +l-no-8-UUID_LEN], base+o+no+UUID_LEN+8, depth+1)
     elif chunkName in innerOffsets: #it depends on chunkName
       start = o+no+innerOffsets[chunkName]
